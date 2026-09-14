@@ -14,8 +14,26 @@ import { ApiError } from '@/api/errors'
  *   invalidateQueries({ queryKey: ['threads'] })  会连带失效下面所有的。
  */
 export const queryKeys = {
+  config: ['config'] as const,
   threads: (workspace?: string) => ['threads', workspace ?? ''] as const,
   snapshot: (threadId: string) => ['threads', threadId, 'snapshot'] as const,
+}
+
+/**
+ * 服务端能力描述。整个会话期间不会变，所以永不过期、永不重取。
+ *
+ * 老版本后端没有 /api/config，会返回 404。这里把它当成「没有边界信息」
+ * 而不是错误——新建会话的表单少一条提示，但不该因此整块坏掉。
+ */
+export function useServerConfig() {
+  const client = useApiClient()
+  return useQuery({
+    queryKey: queryKeys.config,
+    queryFn: () => threads.getServerConfig(client),
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+  })
 }
 
 export function useThreadList(workspace?: string) {

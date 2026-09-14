@@ -7,7 +7,7 @@
 
 凡是设计文档和代码有出入的地方，**以代码为准**，并在本文末尾"契约缺口"一节里单独列出。前端所有的兜底逻辑都源自那一节，不要在别处凭感觉加兜底。
 
-> **状态**：写前端过程中发现的六处缺口**已经全部在后端修掉**（每处都配了 Go 回归测试，`go vet` + `go test -race ./...` 全绿）。下面保留完整的发现与修复记录，因为"怎么发现的"比"改了什么"更有参考价值。前端同时保留了对老版本后端的兼容降级，两边可以独立部署。
+> **状态**：写前端过程中发现的七处缺口**已经全部在后端修掉**（每处都配了 Go 回归测试，`go vet` + `go test -race ./...` 全绿）。下面保留完整的发现与修复记录，因为"怎么发现的"比"改了什么"更有参考价值。前端同时保留了对老版本后端的兼容降级，两边可以独立部署。
 
 ## REST 表面
 
@@ -16,6 +16,7 @@ Base URL 开发期是 `http://localhost:8080`，通过 `VITE_API_BASE` 注入。
 | 方法与路径 | 请求体 | 成功响应 | 前端用途 |
 |---|---|---|---|
 | `GET /api/health` | — | 200 `{status:"ok"}` | 连接自检 |
+| `GET /api/config` | — | 200 `{workspace_root, allow_any_workspace}` | 新建会话时提示可选目录范围 |
 | `POST /api/threads` | `{workspace, title?}` | 201 `{thread_id, meta}` | 新建会话 |
 | `GET /api/threads?workspace=` | — | 200 `{threads: Meta[]}` | 侧栏列表 |
 | `GET /api/threads/{id}` | — | 200 `Snapshot` | 首屏快照 |
@@ -165,7 +166,7 @@ data: {"seq":42,"thread_id":"th_...","turn_id":"turn_...","at":"...","type":"ite
 
 ## 契约缺口与修复
 
-以下六条是核对源码和真机联调时发现的、后端确实给不了前端想要的东西的地方。**全部已修复**，每条都记录了症状、改法和验证方式。
+以下七条是核对源码和真机联调时发现的、后端确实给不了前端想要的东西的地方。**全部已修复**，每条都记录了症状、改法和验证方式。
 
 前端对每条都保留了降级路径（字段标为可选、缺失时走兜底），所以前后端可以独立发布。
 
@@ -252,6 +253,41 @@ case UsageUpdated:
 **改法**：`append(make([]Item, 0, len(t.items)), t.items...)` 代替 `append([]Item(nil), t.items...)`。后端 `listThreads` 里对 metas 本来就做过同样的处理（"没有会话时返回空数组而不是 null：前端可以直接 .map"），只是 `Snapshot` 这两处漏了。
 
 **前端也同时加了兜底**（`snapshot.items ?? []`）：不因为上游一个字段是 null 就整页崩掉。两边都改不是重复——后端保证正确输出，前端保证不因上游出错而崩，这是两条不同的底线。
+
+### 七、工作目录是假的：设计说按会话，实现是全局 ✅ 已修
+
+**这是七条里最严重的一条**，因为它不是"少给了什么"，而是**一个功能整体没有生效，界面上却看不出来**。
+
+**症状**：在前端新建会话时填 `/Users/me/project-A`，Agent 却报告自己在 `/tmp/demo-ws`（服务启动时 `-workspace` 指定的目录）。换句话说，前端那个「工作目录」输入框**形同虚设** —— 填什么都一样。
+
+**根因**（`grep -rn "\.Workspace" internal/` 一眼可见）：`Thread.Meta.Workspace` 在整个后端只被读过两次，**都是用来过滤会话列表的**，从来没有参与过命令执行的作用域。真正决定在哪执行的是这条链：
+
+```go
+// cmd/code-agent-server/main.go —— 启动时一次性绑定
+env, err := local.New(*workspace, local.Options{})   // 一个 Environment
+tools := tool.NewRegistry(bash.New(env, 0))          // 一个 Registry
+codeAgent := agent.New(llm, tools, ...)              // Agent 持有它，终身不变
+```
+
+而设计文档 `doc/modules/http-api.md:35` 明确写着：
+
+> 一个工作目录下可以有任意多个 Thread，互相独立。这是 `workspace` 作为 Thread 属性而不是全局配置的原因。
+
+**设计和实现分了岔，而且岔了之后没有任何东西会报错** —— 任务照常跑完，只是跑错了地方。
+
+**为什么我没早发现**：我写契约文档时逐条核对了事件、字段、状态码，唯独这一条我是**照着设计文档信了**，没去追 `Workspace` 字段的读取点。教训很直接：**核对契约要核对"这个字段被谁读"，而不只是"这个字段存不存在"。**
+
+**改法**（三处）：
+
+1. `agent.ToolsFor` —— Agent 不再持有固定的 Registry，改持有 `func(workspace string) (*tool.Registry, error)`。`RunPrepared` 每轮按 `thread.Meta().Workspace` 解析一次。CLI 用 `agent.StaticTools()` 包一个固定的，行为不变。
+2. `local.Root` —— 新增执行边界。`-workspace` 从"唯一的工作目录"变成"允许的根目录"，会话可以用它或它下面的任意子目录。
+3. `POST /threads` 建会话时就校验，越界返回 400 `invalid_workspace`，并存规范化后的绝对路径。
+
+**为什么要加边界而不是直接放开**：工作目录由 HTTP 客户端指定是设计如此，但"由客户端指定"和"可以是文件系统任意位置"是两回事 —— 后者意味着任何能访问这个端口的人都能让 Agent 在任意目录跑 bash。需要不受限时用 `-allow-any-workspace` 显式打开：**危险的能力应当是「选进来」的，不该是「忘了关」的**。
+
+边界检查解析符号链接后再比较，不是只比字符串前缀 —— 在允许的目录里放一个指向 `/` 的软链接，字面上它确实以根目录开头。这类检查一旦只比字符串就等于没做，`TestRootResolveFollowsSymlinks` 专门守这条。
+
+**验证**：起一个 `-workspace ~/Demo/.wsdemo` 的服务，建两个会话分别指向 `alpha/` 和 `beta/`，各跑 `cat who.txt` —— 一个答 "I am ALPHA"，一个答 "I am BETA"。改之前两个都会答同一个。
 
 ### 还没修：断线补发受内存环形缓冲限制
 

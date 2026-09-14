@@ -1,5 +1,5 @@
 import type { ApiClient } from './client'
-import type { Meta, Snapshot } from '@/types/contract'
+import type { Meta, ServerConfig, Snapshot } from '@/types/contract'
 
 /**
  * 会话相关的端点。
@@ -7,6 +7,10 @@ import type { Meta, Snapshot } from '@/types/contract'
  * 每个函数都显式接收 ApiClient 而不是 import 全局实例，这样调用方
  * （store/queries.ts）可以把从 Context 拿到的实例传进来，测试则传假的。
  */
+
+export function getServerConfig(client: ApiClient) {
+  return client.request<ServerConfig>('/api/config')
+}
 
 export interface CreateThreadInput {
   workspace: string

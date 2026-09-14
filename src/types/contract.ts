@@ -129,6 +129,19 @@ export interface Snapshot {
   context_window?: number
 }
 
+/**
+ * 对齐 httpapi.configResponse（GET /api/config）。
+ *
+ * 需要这个端点是因为「工作目录可以填哪些」是**服务端的策略**，客户端猜不出来。
+ * 没有它的话前端只能让用户盲填一个路径，填错了才收到 400。
+ */
+export interface ServerConfig {
+  /** 服务启动时声明的根目录。会话的工作目录必须是它或它的子目录。 */
+  workspace_root: string
+  /** 为 true 时服务端放弃了边界检查，任意已存在的目录都可以。 */
+  allow_any_workspace: boolean
+}
+
 // ── 模型消息 ────────────────────────────────────────────────────────────
 
 export type Role = 'system' | 'user' | 'assistant' | 'tool'

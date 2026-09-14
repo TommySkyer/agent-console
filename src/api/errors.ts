@@ -52,6 +52,18 @@ export class ApiError extends Error {
     return this.code !== 'turn_in_progress'
   }
 
+  /**
+   * 面向用户的详细说明，拿不到就退回通用文案。
+   *
+   * 这里用后端原始 message 并不违反「绝不解析 message」那条规矩 ——
+   * 那条规矩管的是**分支判断**（分支只能依据 code，因为文本随时会改），
+   * 不是**展示**。对字段级校验错误来说，「/etc 不在 /Users/... 之内」
+   * 比「工作目录无效」有用得多：前者告诉用户怎么改，后者只是重复了一遍他已经知道的事。
+   */
+  get detailedMessage(): string {
+    return this.detail.trim() || this.message
+  }
+
   /** 重试有没有意义。用来决定 Query 的 retry 策略和 Toast 上要不要放重试按钮。 */
   get retryable(): boolean {
     return this.code === 'provider_error' || this.code === 'internal' || this.code === 'network'

@@ -42,11 +42,16 @@ npm run dev        # :5173
 ```bash
 cd ../code-agent
 go run ./cmd/code-agent-server \
-  -workspace /path/to/your/project \
+  -workspace /path/to/your/projects \
   -data .tmp/code-agent/sessions
 ```
 
-两点说明：
+说明：
+
+- **`-workspace` 是「允许的根目录」，不是「唯一的工作目录」**。会话可以选它
+  或它下面的任意子目录，所以通常指向一个**包含多个项目的父目录**。越界的
+  请求会在建会话时就返回 400，前端在输入框下面内联提示。
+  需要完全不受限时加 `-allow-any-workspace`（默认关，因为那等于放弃执行边界）。
 
 - **API key 不用手动 export**。后端用 godotenv 自动读 `code-agent/.env` 里的
   `DEEPSEEK_API_KEY`，只要在 `code-agent/` 目录下启动就行。
@@ -124,7 +129,7 @@ Context 只用来**注入依赖**（`ApiClient`、store 引用、Toast 派发）
 
 ## 对后端的改动
 
-写这个面板的过程中发现并修复了**六处**后端契约缺口，都在 `../code-agent`，每处配了 Go 回归测试：
+写这个面板的过程中发现并修复了**七处**后端契约缺口，都在 `../code-agent`，每处配了 Go 回归测试：
 
 1. `Item` 加 `turn_id` / `step` —— 快照原本画不出层次（实时流有、快照丢了）
 2. `Snapshot` 加 `context_window` —— 打开历史会话时进度条没有分母
@@ -132,6 +137,8 @@ Context 只用来**注入依赖**（`ApiClient`、store 引用、Toast 派发）
 4. `Snapshot` 加 `TurnMeta` —— 刷新后看不到"用户这一轮问了什么"
 5. SSE 建流后立刻发一行注释 —— 否则代理不转发响应头，`EventSource` 永远停在 CONNECTING
 6. 空切片序列化成 `[]` 而不是 `null` —— 否则**新建的空会话必然白屏**
+7. **工作目录真正按会话生效** —— 此前 `Thread.Meta.Workspace` 只是个标签，所有会话
+   都跑在服务启动时的 `-workspace` 里，前端那个输入框形同虚设（设计文档说的是按会话）
 
 最后两条都只有真机才会暴露：第 5 条单元测试测不出来（测试用 `httptest` 直连，中间没有代理），第 6 条只在"一个 item 都没有"的空会话上出现，而测试 fixture 总是有数据的。详见 [后端契约实录](doc/backend-contract.md)。
 

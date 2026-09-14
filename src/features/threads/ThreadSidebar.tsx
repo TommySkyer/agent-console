@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, useNavigate, useSearchParams } from 'react-router-dom'
-import { useCreateThread, useDeleteThread, useThreadList } from '@/store/queries'
+import { useCreateThread, useDeleteThread, useServerConfig, useThreadList } from '@/store/queries'
 import { Button, EmptyState, Spinner } from '@/components/primitives'
 import { basename, relativeTime } from '@/lib/format'
 import { ApiError } from '@/api/errors'
@@ -131,18 +131,34 @@ function CreateThreadDialog({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate()
   const create = useCreateThread()
   const toast = useToast()
+  const config = useServerConfig()
+  // 预填服务端的根目录：绝大多数情况下用户就是想用它，或者它下面的某个子目录。
+  // 让用户对着一个空输入框猜服务端允许什么，是这个表单之前最大的问题。
   const [workspace, setWorkspace] = useState('')
   const [title, setTitle] = useState('')
   const [fieldError, setFieldError] = useState('')
 
+  const root = config.data?.workspace_root
+  const allowAny = config.data?.allow_any_workspace ?? false
+  const effective = workspace.trim() || root || ''
+
+  useEffect(() => {
+    // 配置到达后填进输入框。只在用户还没动过输入框时填，
+    // 否则会把正在输入的内容覆盖掉。
+    if (root && !workspace) setWorkspace(root)
+    // 依赖里刻意不放 workspace：放了的话用户每清空一次输入框就会被重新填上，
+    // 想删都删不掉。这里要的是「首次拿到配置时填一次」。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [root])
+
   function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (!workspace.trim()) {
+    if (!effective) {
       setFieldError('工作目录不能为空')
       return
     }
     create.mutate(
-      { workspace: workspace.trim(), title: title.trim() || undefined },
+      { workspace: effective, title: title.trim() || undefined },
       {
         onSuccess: (data) => {
           onClose()
@@ -152,7 +168,9 @@ function CreateThreadDialog({ onClose }: { onClose: () => void }) {
           if (!(error instanceof ApiError)) return
           // invalid_workspace 是字段级错误，显示在输入框下面比弹 toast 更合适——
           // 用户需要知道是**哪个字段**错了。
-          if (error.code === 'invalid_workspace') setFieldError(error.message)
+          // 字段级错误显示详细原因（「/etc 不在 /Users/... 之内」），
+          // 而不是通用的「工作目录无效」—— 用户需要知道怎么改。
+          if (error.code === 'invalid_workspace') setFieldError(error.detailedMessage)
           else if (error.shouldToast) toast.show(error.message, 'error')
         },
       },
@@ -186,16 +204,34 @@ function CreateThreadDialog({ onClose }: { onClose: () => void }) {
             setFieldError('')
           }}
           autoFocus
-          placeholder="/Users/you/project"
+          placeholder={root ?? '/Users/you/project'}
           className="mb-1 w-full rounded border border-line-strong bg-canvas px-2.5 py-1.5 font-mono text-[12px] text-ink focus:border-accent/60 focus:outline-none"
         />
-        <p className="mb-3 text-[10px] text-ink-faint">
+        <div className="mb-3 text-[10px] leading-relaxed text-ink-faint">
           {fieldError ? (
             <span className="text-danger">{fieldError}</span>
           ) : (
-            'Agent 的所有命令都在这个目录里执行，后端启动时已固定可访问范围。'
+            <>
+              <p>Agent 的所有命令都在这个目录里执行。</p>
+              {/* 把服务端的边界显式说出来。用户猜不到这条策略，
+                  而猜错的代价是提交之后才收到 400。 */}
+              {root && !allowAny && (
+                <p className="mt-0.5">
+                  必须是 <span className="font-mono text-ink-muted">{root}</span> 或它下面的子目录
+                  <span className="text-ink-faint/70">（由服务端启动参数 -workspace 决定）</span>
+                </p>
+              )}
+              {allowAny && (
+                <p className="mt-0.5 text-running">
+                  服务端开了 -allow-any-workspace：任意已存在的目录都可以
+                </p>
+              )}
+              {config.isError && (
+                <p className="mt-0.5">服务端未提供 /api/config，无法确认允许范围</p>
+              )}
+            </>
           )}
-        </p>
+        </div>
 
         <label className="mb-1 block text-[11px] text-ink-muted" htmlFor="title">
           标题（可选）
