@@ -1,0 +1,58 @@
+@import 'tailwindcss';
+
+/**
+ * 设计令牌。
+ *
+ * Tailwind v4 用 CSS 变量做配置（@theme），不再需要 tailwind.config.js。
+ * 这里只定义项目真正用得上的语义色，不堆一整套调色板——每多一个没人用的
+ * 令牌，就多一处让人犹豫"该用哪个"的地方。
+ *
+ * 面板是运维/观测性质的，所以配色按**状态语义**组织而不是按视觉喜好：
+ * 一眼要能分出「正在跑」「成功」「失败」「模型在想」。
+ */
+@theme {
+  --color-canvas: #0a0a0b;
+  --color-surface: #131316;
+  --color-surface-raised: #1a1a1f;
+  --color-line: #26262b;
+  --color-line-strong: #35353d;
+
+  --color-ink: #e8e8ec;
+  --color-ink-muted: #9a9aa5;
+  --color-ink-faint: #6b6b76;
+
+  --color-running: #d4a72c;
+  --color-success: #3fb950;
+  --color-danger: #f25555;
+  --color-reasoning: #a371f7;
+  --color-accent: #4a9eff;
+
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-feature-settings: 'tnum' 1; /* 等宽数字：token 计数跳动时不会左右抖 */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 滚动条压暗，避免在深色面板上显得突兀 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.animate-pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
