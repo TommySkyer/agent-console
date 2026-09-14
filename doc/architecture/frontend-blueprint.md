@@ -133,7 +133,7 @@ POST /turns → 202 Accepted     响应发出时 Turn 才刚被准入，一步�
 
 ## 六、测试策略
 
-29 个测试，分四层，每层测它最该测的东西。
+33 个测试，分四层，每层测它最该测的东西。
 
 | 测什么 | 文件 | 关键点 |
 |---|---|---|
@@ -151,7 +151,7 @@ POST /turns → 202 Accepted     响应发出时 Turn 才刚被准入，一步�
 ```bash
 npm run dev      # Vite dev server，:5173，/api 代理到 :8080
 npm run mock     # 协议级 mock 后端，回放真实日志，不烧 API 额度
-npm test         # 29 个测试
+npm test         # 33 个测试
 npm run build    # 产物 119 KB gzipped
 ```
 

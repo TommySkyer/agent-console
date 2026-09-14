@@ -488,7 +488,7 @@ if (event.seq !== state.lastSeq + 1) return { ...state, desynced: true }   // �
 
 ## 八、如果被问"你在这个项目里改了后端，改了什么、为什么"
 
-写前端的过程中发现了四处后端契约缺口，都改了，每处都配了回归测试。**这部分比前端代码更值得讲**，因为它体现的是"能发现问题"而不只是"能实现需求"。
+写前端的过程中发现了六处后端契约缺口，都改了，每处都配了回归测试。**这部分比前端代码更值得讲**，因为它体现的是"能发现问题"而不只是"能实现需求"。
 
 | 缺口 | 症状 | 改法 | 测试 |
 |---|---|---|---|
@@ -496,6 +496,11 @@ if (event.seq !== state.lastSeq + 1) return { ...state, desynced: true }   // �
 | Snapshot 不带 `context_window` | 打开历史会话时"上下文占用"没有分母，进度条画不出来 | `Snapshot` 加字段 | 同上文件 |
 | `usage` 重放语义与实时不一致 | 进程重启后跨轮累计变成"最后一轮的量" | `t.usage = payload.Turn` → `t.usage.Add(payload.Delta)` | `TestReplayReproducesLiveState` |
 | Snapshot 没有轮次元信息 | 刷新后看不到"用户这一轮问了什么" | 新增 `TurnMeta` 投影 | 同上 |
+| 空切片序列化成 `null` | **新建的空会话必然白屏** | `append(make([]T,0,n), ...)` | `TestEmptySnapshotSerializesAsArrays` |
+
+最后那条值得单独说，因为它是**测试盲区**的典型：Go 的 `encoding/json` 把 nil 切片编码成 `null` 而不是 `[]`，前端 `for...of null` 直接抛 `TypeError`。症状是"新建会话必然白屏，但跑过任务的会话完全正常"——而所有测试 fixture 都是有数据的，所以单测和组件测试全绿。是在浏览器里点"新建会话"时才发现的。
+
+前端也同步加了 `?? []` 兜底：**不因为上游一个字段是 null 就整页崩掉**，这条底线要自己守，不能指望上游永远不出错。
 
 另外还修了一个**只有真机联调才会暴露**的问题：
 

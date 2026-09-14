@@ -65,7 +65,7 @@ MOCK_DROP=1 npm run mock      # 随机丢事件，验证前端的 seq 缺口自�
 |---|---|
 | `npm run dev` | 开发服务器，`/api` 代理到 `:8080` |
 | `npm run mock` | 协议级 mock 后端 |
-| `npm test` | 32 个测试 |
+| `npm test` | 33 个测试 |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run build` | 生产构建（119 KB gzipped） |
 
@@ -105,7 +105,7 @@ Context 只用来**注入依赖**（`ApiClient`、store 引用、Toast 派发）
 
 ## 测试
 
-32 个测试，分四层：
+33 个测试，分四层：
 
 | 层 | 关键点 |
 |---|---|
@@ -118,15 +118,16 @@ Context 只用来**注入依赖**（`ApiClient`、store 引用、Toast 派发）
 
 ## 对后端的改动
 
-写这个面板的过程中发现并修复了五处后端契约缺口，都在 `../code-agent`，每处配了 Go 回归测试：
+写这个面板的过程中发现并修复了**六处**后端契约缺口，都在 `../code-agent`，每处配了 Go 回归测试：
 
 1. `Item` 加 `turn_id` / `step` —— 快照原本画不出层次（实时流有、快照丢了）
 2. `Snapshot` 加 `context_window` —— 打开历史会话时进度条没有分母
 3. `usage` 重放语义修正 —— 进程重启后跨轮累计会变成"最后一轮的量"
 4. `Snapshot` 加 `TurnMeta` —— 刷新后看不到"用户这一轮问了什么"
 5. SSE 建流后立刻发一行注释 —— 否则代理不转发响应头，`EventSource` 永远停在 CONNECTING
+6. 空切片序列化成 `[]` 而不是 `null` —— 否则**新建的空会话必然白屏**
 
-第 5 条只有真机联调才会暴露，单元测试测不出来（测试用 `httptest` 直连，中间没有代理）。详见 [后端契约实录](doc/backend-contract.md)。
+最后两条都只有真机才会暴露：第 5 条单元测试测不出来（测试用 `httptest` 直连，中间没有代理），第 6 条只在"一个 item 都没有"的空会话上出现，而测试 fixture 总是有数据的。详见 [后端契约实录](doc/backend-contract.md)。
 
 前端对每条都保留了降级路径（字段标可选、缺失时走兜底），所以前后端可以独立发布。
 
