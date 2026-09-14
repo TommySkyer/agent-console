@@ -41,12 +41,18 @@ npm run dev        # :5173
 
 ```bash
 cd ../code-agent
-export DEEPSEEK_API_KEY=...
 go run ./cmd/code-agent-server \
   -workspace /path/to/your/project \
-  -data .tmp/code-agent/sessions \
-  -cors http://localhost:5173
+  -data .tmp/code-agent/sessions
 ```
+
+两点说明：
+
+- **API key 不用手动 export**。后端用 godotenv 自动读 `code-agent/.env` 里的
+  `DEEPSEEK_API_KEY`，只要在 `code-agent/` 目录下启动就行。
+- **不用加 `-cors`**。前端通过 Vite 的 `/api` 代理访问后端，浏览器看到的是同源请求。
+  只有在前端直连 `:8080`（不走代理）时才需要开 CORS。
+- `-workspace` 指向的目录**必须已存在**，后端在启动时就校验，不存在会直接退出。
 
 ### mock 后端能做的事
 
