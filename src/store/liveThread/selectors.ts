@@ -29,5 +29,11 @@ export const selectLastSeq = (s: LiveThreadState) => s.lastSeq
 /** 按 ID 取单个 Item。这是"只有正在流的那张卡片重渲染"的实现入口。 */
 export const selectItem = (id: string) => (s: LiveThreadState) => s.items.get(id)
 
+/**
+ * 轮次数量。用作「用户提交了新一轮」的信号 —— 它只在 turn.started 时增加，
+ * 而这个界面里 turn.started 只可能来自用户自己的提交。
+ */
+export const selectTurnCount = (s: LiveThreadState) => s.turns.length
+
 /** 卡片总数，给概览用。返回 number，引用天然稳定。 */
 export const selectItemCount = (s: LiveThreadState) => s.items.size

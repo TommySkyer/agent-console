@@ -1,46 +1,96 @@
-import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 
-/** 距底部多少像素以内算「贴着底」。留一点余量，不然滚动条的亚像素误差会误判。 */
+/** 距底部多少像素以内算「贴着底」。留余量是因为滚动条有亚像素误差。 */
 const STICK_THRESHOLD = 48
 
+export interface StickState {
+  /** 当前是否贴着底。用来决定要不要显示「有新内容」按钮。 */
+  atBottom: boolean
+  /** 有新内容但用户不在底部。 */
+  hasNewBelow: boolean
+  /** 强制滚到底并重新开始跟随。 */
+  scrollToBottom: () => void
+}
+
 /**
- * 内容增长时自动滚到底，但**用户往回翻的时候不抢滚动条**。
+ * 跟随底部，但不抢用户的滚动条。
  *
- * 这是日志/聊天类界面的经典需求，也是一个典型的"必须用 ref 而不是 state"的场景：
- * 要读写的是真实 DOM 的 scrollTop，不是 React 管理的数据。用 state 存滚动位置
- * 既会每帧触发重渲染，又永远慢 DOM 一拍。
+ * ## 这里修的是一个真实 bug
  *
- * 用 useLayoutEffect 而不是 useEffect：滚动必须在浏览器绘制**之前**完成，
- * 否则用户会看到内容先跳出来、下一帧再滚下去的闪动。这正是两个 Hook 的
- * 分工——useLayoutEffect 同步跑在 DOM 变更之后、绘制之前。
+ * 最初的实现只有一条规则：「内容变长时，如果用户贴着底就滚到底」。
+ * 这条规则对**流入的内容**是对的，但对**用户自己发出的内容**是错的 ——
  *
- * @param ref    滚动容器
- * @param trigger 变化时检查是否需要滚动的依赖（通常是内容长度或 seq）
- * @param enabled 关掉之后完全不干预滚动
+ *   用户往回翻看历史（很自然）→ 提交新一轮 → 新内容（含他自己刚发的那句话）
+ *   渲染在视口外 → 页面纹丝不动 → 看起来就像「提交没反应」。
+ *   刷新页面后首屏会自动滚到底，于是「刷新才能看到结果」。
+ *
+ * 实测过：往回翻 400px 之后提交，新内容落在视口外 316px 处，自己发的那句话
+ * 完全在屏幕外。这就是「必须手动刷新」的真正原因 —— 事件一直在实时到达，
+ * 只是视图从不跟随。
+ *
+ * 所以现在有**两种**触发：
+ *   follow —— 内容增长。只在用户贴着底时跟随。
+ *   jump   —— 用户自己的动作（发了一轮）。无条件滚到底并重新开始跟随。
+ *             「我发的东西我要看见」是聊天界面的通用预期，没有例外。
+ *
+ * 另外把 atBottom 暴露出去，让界面能在用户翻到上面时显示「有新内容 ↓」，
+ * 而不是默默地把内容堆在看不见的地方。
  */
 export function useStickToBottom(
   ref: RefObject<HTMLElement | null>,
-  trigger: unknown,
+  follow: unknown,
+  jump: unknown,
   enabled = true,
-): void {
-  // 是否处于"贴底"状态。存在 ref 里而不是 state：它每次滚动都会变，
-  // 放进 state 会把滚动变成一连串重渲染，而它根本不影响渲染输出。
+): StickState {
+  // 贴底状态同时存 ref 和 state：
+  //   ref 供 effect 同步读取（滚动事件高频，读 state 会拿到闭包里的旧值）
+  //   state 供渲染「有新内容」按钮（低频，只在跨越阈值时变）
   const stuck = useRef(true)
+  const [atBottom, setAtBottom] = useState(true)
+  const [hasNewBelow, setHasNewBelow] = useState(false)
+
+  const sync = useCallback((element: HTMLElement) => {
+    const distance = element.scrollHeight - element.scrollTop - element.clientHeight
+    const next = distance <= STICK_THRESHOLD
+    stuck.current = next
+    // 只在跨越阈值时 setState，避免每个滚动事件都触发重渲染。
+    setAtBottom((previous) => (previous === next ? previous : next))
+    if (next) setHasNewBelow(false)
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    const element = ref.current
+    if (!element) return
+    element.scrollTop = element.scrollHeight
+    stuck.current = true
+    setAtBottom(true)
+    setHasNewBelow(false)
+  }, [ref])
 
   useEffect(() => {
     const element = ref.current
     if (!element) return
-    const onScroll = () => {
-      const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-      stuck.current = distance <= STICK_THRESHOLD
-    }
+    const onScroll = () => sync(element)
     element.addEventListener('scroll', onScroll, { passive: true })
     return () => element.removeEventListener('scroll', onScroll)
-  }, [ref])
+  }, [ref, sync])
 
+  // 内容增长：贴底才跟随，否则只标记「下面有新东西」。
+  //
+  // useLayoutEffect 而不是 useEffect：滚动必须在浏览器绘制**之前**完成，
+  // 否则会看到内容先跳出来、下一帧才滚下去的闪动。
   useLayoutEffect(() => {
     const element = ref.current
-    if (!enabled || !element || !stuck.current) return
-    element.scrollTop = element.scrollHeight
-  }, [ref, trigger, enabled])
+    if (!enabled || !element) return
+    if (stuck.current) element.scrollTop = element.scrollHeight
+    else setHasNewBelow(true)
+  }, [ref, follow, enabled])
+
+  // 用户自己的动作：无条件滚到底。
+  useLayoutEffect(() => {
+    if (!enabled) return
+    scrollToBottom()
+  }, [jump, enabled, scrollToBottom])
+
+  return { atBottom, hasNewBelow, scrollToBottom }
 }

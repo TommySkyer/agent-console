@@ -59,27 +59,33 @@ function ItemBody({ item }: { item: Item }) {
 }
 
 /**
- * 开发模式下在卡片角上显示重渲染次数。
+ * 在卡片角上显示重渲染次数。**默认关闭，用 ?debug=1 打开。**
  *
- * 这不是调试残留，是给这套架构留的**可验证性**：跑一次流式输出就能亲眼看到
- * "只有正在流的那张卡片计数在涨，其余全部停在 1"。
+ * 这不是调试残留，是给这套架构留的**可验证性**：开着它跑一次流式输出，
+ * 能亲眼看到「只有正在流的那张卡片计数在涨，其余全部停在 1」。
  * 没有它，"选择性订阅生效了"就只是一句口头声明。
  *
- * import.meta.env.DEV 在生产构建时是编译期常量 false，
- * 整个分支会被 tree-shaking 掉，不占生产包体积。
+ * 为什么要做成 opt-in 而不是开发模式下常开：它会在演示和日常开发时
+ * 一直挂在卡片角上，看久了就成了噪音 —— 而它其实只在「我要验证这条架构
+ * 声明」的时候才有用。默认关掉，需要时加一个查询参数。
+ *
+ * import.meta.env.DEV 在生产构建时是编译期常量 false，整个分支会被
+ * tree-shaking 掉，不占生产包体积。
  */
+const SHOW_RENDER_COUNT =
+  import.meta.env.DEV && new URLSearchParams(window.location.search).get('debug') === '1'
+
 function RenderCounter({ itemId, children }: { itemId: string; children: React.ReactNode }) {
   const renders = useRef(0)
-  if (!import.meta.env.DEV) return <>{children}</>
+  if (!SHOW_RENDER_COUNT) return <>{children}</>
   renders.current += 1
   return (
     <div className="group relative">
       {children}
       <span
         title={`${itemId} 重渲染次数`}
-        className="pointer-events-none absolute -top-1.5 -right-1.5 rounded bg-canvas px-1
-                   font-mono text-[10px] text-ink-faint opacity-0 transition-opacity
-                   group-hover:opacity-100"
+        className="pointer-events-none absolute -top-1.5 -right-1.5 rounded border border-line
+                   bg-canvas px-1 font-mono text-[10px] text-running"
       >
         ×{renders.current}
       </span>

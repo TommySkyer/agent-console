@@ -8,6 +8,7 @@
 | 路由 | react-router-dom | 7 | 不用"单页 tab 切换"：会话要能被 URL 直接分享和刷新恢复 |
 | 服务端资源 | TanStack Query | 5 | 不手写 `useEffect` + `useState`：会重复造 loading / error / 缓存 / 失效 |
 | 实时投影 | 自建 store + `useSyncExternalStore` | — | 不用 Query（语义不符）、不用 Context（性能）、不用 Redux（仪式过重）。详见 [状态模型与实时层](state-and-realtime.md) |
+| Markdown | react-markdown + remark-gfm | 10 / 4 | 不手写解析器：Markdown 边界情况多得离谱，自己写的「够用版」最后要么漏渲染要么渲染错。react-markdown 不碰 innerHTML，构造 React 元素树，对不可信的模型输出天然安全 |
 | 样式 | Tailwind | 4 | 不用 CSS Modules：组件多但样式简单（卡片、徽章、进度条），原子类比维护几十个 `.module.css` 快 |
 | 测试 | Vitest + Testing Library | 5 / 16 | Vite 项目用 Vitest 配置成本最低；不引 MSW，因为 `ApiClient` 本身就可注入，不需要在网络层做 mock |
 
@@ -133,7 +134,7 @@ POST /turns → 202 Accepted     响应发出时 Turn 才刚被准入，一步�
 
 ## 六、测试策略
 
-33 个测试，分四层，每层测它最该测的东西。
+41 个测试，分四层，每层测它最该测的东西。
 
 | 测什么 | 文件 | 关键点 |
 |---|---|---|
@@ -151,8 +152,8 @@ POST /turns → 202 Accepted     响应发出时 Turn 才刚被准入，一步�
 ```bash
 npm run dev      # Vite dev server，:5173，/api 代理到 :8080
 npm run mock     # 协议级 mock 后端，回放真实日志，不烧 API 额度
-npm test         # 33 个测试
-npm run build    # 产物 119 KB gzipped
+npm test         # 41 个测试
+npm run build    # 首屏 121 KB gzipped，Markdown 渲染器 46 KB 按需加载
 ```
 
 **为什么用代理而不是跨域直连后端**：一是不依赖后端开 CORS（后端的 `-cors` 参数只在开发模式挂载，生产留空）；二是 `EventSource` 跨域时的凭据和预检行为比同源复杂得多，同源可以完全绕开。生产环境由 nginx 做同样的事。
@@ -167,6 +168,5 @@ MOCK_DROP=1 npm run mock      # 随机丢包，逼出重新同步
 ## 八、后续
 
 - **虚拟滚动**：跑了很多轮的会话会有几百张卡片全挂在 DOM 上。目前没到瓶颈（卡片本身很轻），但这是下一个会遇到的性能问题。
-- **Markdown 渲染**：模型输出是不可信输入，不能走 `dangerouslySetInnerHTML`；流式下半截语法的处理需要单独设计（正确做法是流式期间纯文本、`item.completed` 之后再渲染）。
 - **E2E**：`mock-server/` 已经为此准备好了，差的是把 Playwright 驱动脚本固化成 CI 里能跑的测试。
 - **生产部署**：前端产物由 nginx serve 并反代 `/api`，还是后端用 `embed.FS` 一起打包，需要和后端一侧确认。

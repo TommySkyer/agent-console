@@ -46,6 +46,37 @@ export function basename(path: string): string {
   return parts[parts.length - 1] || path
 }
 
+/**
+ * 把 Markdown 压成一行纯文本，用作折叠时的摘要。
+ *
+ * 不是要"渲染 Markdown"，只是把语法噪音去掉 —— 折叠行上出现
+ * `## 目录概览 | 项目 | 值 | | --- | --- |` 这种东西，比不给摘要还糟。
+ *
+ * 刻意只做删除、不做还原：表格和代码块整块丢弃（一行摘要里放不下，
+ * 放进去只会把真正有信息量的第一句话挤掉），其余只剥掉标记符号。
+ */
+export function plainPreview(markdown: string): string {
+  return markdown
+    .replace(/```[\s\S]*?```/g, ' ') // 代码块整块丢弃
+    .replace(/^\s*\|.*\|\s*$/gm, ' ') // 表格行整行丢弃
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '') // 标题标记
+    .replace(/^\s{0,3}>\s?/gm, '') // 引用标记
+    .replace(/^\s*[-*+]\s+/gm, '') // 无序列表标记
+    .replace(/^\s*\d+\.\s+/gm, '') // 有序列表标记
+    // 链接与图片保留文字丢掉 URL。括号允许嵌套一层，覆盖
+    // https://example.com/a(b) 这类地址；嵌套更深的会留下一个多余的 ')'。
+    // 这是知情的取舍：摘要是有损的一行字，为了正确处理深层嵌套而引入一个
+    // 真正的括号匹配器，性价比不成立 —— 真要完整解析就该用 remark，
+    // 而那正是渲染路径已经在做的事。
+    .replace(/!?\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)/g, '$1')
+    .replace(/(\*\*|__)(.*?)\1/g, '$2') // 粗体
+    .replace(/(\*|_)(.*?)\1/g, '$2') // 斜体
+    .replace(/`([^`]+)`/g, '$1') // 行内代码
+    .replace(/~~(.*?)~~/g, '$1') // 删除线
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 /** 百分比，钳到 0..100 之间——上下文占用超过 100% 时进度条不能溢出。 */
 export function percent(used: number, total: number): number {
   if (!total) return 0

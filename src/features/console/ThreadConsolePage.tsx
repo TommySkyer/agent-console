@@ -12,7 +12,7 @@ import { ApiError } from '@/api/errors'
 import { useSnapshot } from '@/store/queries'
 import { useStickToBottom } from '@/hooks/useStickToBottom'
 import { useLiveSelector } from '@/store/liveThread/LiveThreadContext'
-import { selectLastSeq } from '@/store/liveThread/selectors'
+import { selectLastSeq, selectTurnCount } from '@/store/liveThread/selectors'
 import { basename } from '@/lib/format'
 
 /**
@@ -121,14 +121,36 @@ export function ThreadConsolePage() {
  */
 function ScrollArea({ active, children }: { active: boolean; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
-  // 用 lastSeq 当触发器：它每条事件都前进，正好等价于"内容可能变长了"，
-  // 而且是个 number，引用天然稳定，不会让选择器出问题。
+  // follow 用 lastSeq：每条事件都前进，正好等价于"内容可能变长了"。
+  // jump 用轮次数：新一轮出现时无条件滚到底 ——「我发的东西我要看见」。
+  //
+  // 已知的不精确：turns.length 是"用户提交了"的**代理信号**，不是那件事本身。
+  // 另一个标签页或 API 客户端往同一个会话发起的轮次同样会让它加一，
+  // 于是这边也会被强制滚到底。要做精确需要从 TurnComposer 往下传一个显式信号，
+  // 那会在两个本来互不认识的组件之间拉一条线。单用户的本地工具里这个代价
+  // 不值得 —— 但它是个真实的泄漏，写在这里免得以后有人以为它是精确的。
+  //
+  // 两者都是 number，引用天然稳定，不会让选择器出问题。
   const lastSeq = useLiveSelector(selectLastSeq)
-  useStickToBottom(ref, lastSeq, active)
+  const turnCount = useLiveSelector(selectTurnCount)
+  const { hasNewBelow, scrollToBottom } = useStickToBottom(ref, lastSeq, turnCount, active)
 
   return (
-    <div ref={ref} className="min-h-0 flex-1 overflow-auto">
-      {children}
+    <div className="relative min-h-0 flex-1">
+      <div ref={ref} className="h-full overflow-auto">
+        {children}
+      </div>
+      {/* 用户翻到上面时，别让新内容默默堆在看不见的地方。 */}
+      {active && hasNewBelow && (
+        <button
+          type="button"
+          onClick={scrollToBottom}
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-line-strong
+                     bg-surface-raised px-3 py-1.5 text-[11px] text-ink shadow-lg hover:bg-surface"
+        >
+          有新内容 ↓
+        </button>
+      )}
     </div>
   )
 }
