@@ -161,6 +161,20 @@ export interface Message {
   tool_call_id?: string
 }
 
+/** 服务端按实际 Agent 请求组装逻辑生成；messages 尚未包含下一条用户输入。 */
+export interface ModelContext {
+  model: string
+  messages: Message[]
+  tools: { name: string; description: string; parameters: unknown }[]
+  max_tokens: number
+  reasoning_effort: string
+  context_window: number
+  last_model_input_tokens: number | null
+  status: ThreadStatus
+  last_seq: number
+  wire_request?: unknown
+}
+
 // ── 事件协议 ────────────────────────────────────────────────────────────
 
 export type EventType =

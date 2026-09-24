@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useThreadLive } from '@/hooks/useThreadLive'
 import { LiveThreadProvider } from '@/store/liveThread/LiveThreadContext'
@@ -9,11 +10,18 @@ import { TurnComposer } from './TurnComposer'
 import { ConnectionBadge } from './ConnectionBadge'
 import { Button, EmptyState, Spinner } from '@/components/primitives'
 import { ApiError } from '@/api/errors'
-import { useSnapshot } from '@/store/queries'
+import { queryKeys, useSnapshot } from '@/store/queries'
 import { useStickToBottom } from '@/hooks/useStickToBottom'
 import { useLiveSelector } from '@/store/liveThread/LiveThreadContext'
-import { selectLastSeq, selectTurnCount } from '@/store/liveThread/selectors'
+import { selectLastSeq, selectTurnCount, selectTurns } from '@/store/liveThread/selectors'
 import { basename } from '@/lib/format'
+
+export interface PendingTurn {
+  input: string
+  previousTurnCount: number
+  accepted: boolean
+  nonce: number
+}
 
 /**
  * 核心页面：一个会话的执行可视化面板。
@@ -27,7 +35,18 @@ export function ThreadConsolePage() {
   const navigate = useNavigate()
   const { store, streamStatus, isLoading, error } = useThreadLive(threadId)
   const snapshot = useSnapshot(threadId)
+  const queryClient = useQueryClient()
   const [tab, setTab] = useState<'timeline' | 'context'>('timeline')
+  const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null)
+
+  // SSE 断开或迟迟未恢复时，POST 成功后仍要让页面自己追上服务端状态。
+  useEffect(() => {
+    if (!pendingTurn?.accepted) return
+    const timer = window.setInterval(() => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.snapshot(threadId) })
+    }, 1500)
+    return () => window.clearInterval(timer)
+  }, [pendingTurn?.accepted, pendingTurn?.nonce, queryClient, threadId])
 
   if (isLoading) {
     return (
@@ -60,6 +79,7 @@ export function ThreadConsolePage() {
     // 不是 store 里的状态。所以它不会因为 139 次/秒的事件而让全树重渲染。
     // 组件订阅状态走的是 useSyncExternalStore 的选择性订阅路径。
     <LiveThreadProvider store={store}>
+      <PendingTurnObserver pendingTurn={pendingTurn} onConfirmed={() => setPendingTurn(null)} />
       <div className="flex h-full min-w-0">
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex shrink-0 items-center gap-3 border-b border-line px-5 py-3">
@@ -95,11 +115,20 @@ export function ThreadConsolePage() {
             </Tab>
           </nav>
 
-          <ScrollArea active={tab === 'timeline'}>
-            {tab === 'timeline' ? <StepTimeline /> : <ContextInspector />}
+          <ScrollArea active={tab === 'timeline'} pendingNonce={pendingTurn?.nonce}>
+            {tab === 'timeline' ? (
+              <StepTimeline pendingTurn={pendingTurn} />
+            ) : <ContextInspector threadId={threadId} />}
           </ScrollArea>
 
-          <TurnComposer threadId={threadId} />
+          <TurnComposer
+            threadId={threadId}
+            pendingTurn={pendingTurn}
+            onPendingChange={(pending) => {
+              setPendingTurn(pending)
+              if (pending && !pending.accepted) setTab('timeline')
+            }}
+          />
         </div>
 
         <aside className="flex w-64 shrink-0 flex-col border-l border-line bg-surface/30">
@@ -111,6 +140,20 @@ export function ThreadConsolePage() {
   )
 }
 
+function PendingTurnObserver({ pendingTurn, onConfirmed }: {
+  pendingTurn: PendingTurn | null
+  onConfirmed: () => void
+}) {
+  const turns = useLiveSelector(selectTurns)
+  useEffect(() => {
+    if (!pendingTurn?.accepted) return
+    if (turns.slice(pendingTurn.previousTurnCount).some((turn) => turn.input === pendingTurn.input)) {
+      onConfirmed()
+    }
+  }, [pendingTurn, turns, onConfirmed])
+  return null
+}
+
 /**
  * 滚动容器。抽成组件是因为 useStickToBottom 需要订阅 lastSeq，
  * 而那必须在 LiveThreadProvider **内部**才能调用 —— 写在 ThreadConsolePage
@@ -119,10 +162,10 @@ export function ThreadConsolePage() {
  * 这是 Context 最常见的一个使用陷阱：Provider 和 consumer 写在同一个组件里
  * 是不行的，必须隔一层组件边界。
  */
-function ScrollArea({ active, children }: { active: boolean; children: React.ReactNode }) {
+function ScrollArea({ active, pendingNonce, children }: { active: boolean; pendingNonce?: number; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
   // follow 用 lastSeq：每条事件都前进，正好等价于"内容可能变长了"。
-  // jump 用轮次数：新一轮出现时无条件滚到底 ——「我发的东西我要看见」。
+  // jump 用轮次数和本地提交序号：消息刚提交就滚到底，不用等 turn.started。
   //
   // 已知的不精确：turns.length 是"用户提交了"的**代理信号**，不是那件事本身。
   // 另一个标签页或 API 客户端往同一个会话发起的轮次同样会让它加一，
@@ -130,10 +173,10 @@ function ScrollArea({ active, children }: { active: boolean; children: React.Rea
   // 那会在两个本来互不认识的组件之间拉一条线。单用户的本地工具里这个代价
   // 不值得 —— 但它是个真实的泄漏，写在这里免得以后有人以为它是精确的。
   //
-  // 两者都是 number，引用天然稳定，不会让选择器出问题。
+  // 两个 selector 都返回 number，引用天然稳定，不会让选择器出问题。
   const lastSeq = useLiveSelector(selectLastSeq)
   const turnCount = useLiveSelector(selectTurnCount)
-  const { hasNewBelow, scrollToBottom } = useStickToBottom(ref, lastSeq, turnCount, active)
+  const { hasNewBelow, scrollToBottom } = useStickToBottom(ref, lastSeq, `${turnCount}:${pendingNonce ?? ''}`, active)
 
   return (
     <div className="relative min-h-0 flex-1">

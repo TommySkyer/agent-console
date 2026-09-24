@@ -1,5 +1,5 @@
 import type { ApiClient } from './client'
-import type { Meta, ServerConfig, Snapshot } from '@/types/contract'
+import type { Meta, ModelContext, ServerConfig, Snapshot } from '@/types/contract'
 
 /**
  * 会话相关的端点。
@@ -40,6 +40,10 @@ export function listThreads(client: ApiClient, workspace?: string) {
 
 export function getSnapshot(client: ApiClient, threadId: string) {
   return client.request<Snapshot>(`/api/threads/${encodeURIComponent(threadId)}`)
+}
+
+export function getModelContext(client: ApiClient, threadId: string) {
+  return client.request<ModelContext>(`/api/threads/${encodeURIComponent(threadId)}/model-context`)
 }
 
 export function deleteThread(client: ApiClient, threadId: string) {

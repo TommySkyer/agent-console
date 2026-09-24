@@ -1,28 +1,20 @@
 import { useMemo, useState } from 'react'
 import { useLiveSelector } from '@/store/liveThread/LiveThreadContext'
-import { selectMessages } from '@/store/liveThread/selectors'
+import { selectStatus, selectTurnCount } from '@/store/liveThread/selectors'
 import { Badge, Disclosure, EmptyState } from '@/components/primitives'
 import type { Message } from '@/types/contract'
+import { useModelContext } from '@/store/queries'
+import { compactNumber, percent } from '@/lib/format'
 
 /**
- * 模型上下文检查器：把**模型真正看到的东西**画出来。
- *
- * ## 它和时间线是两套投影，不是同一份数据的两种样子
- *
- *   时间线（Item）    给人看的展示单元。一次 bash 调用是**一张卡片**。
- *   这里（Message）   给模型看的历史。同一次 bash 调用是**两条消息**——
- *                     一条带 tool_calls 的 assistant，加一条 tool 结果。
- *
- * 后端为此发两套事件（item.* 和 message.appended），理由是
- * "Model-visible means logged"：凡是能进模型请求的东西都必须能从日志重建，
- * 否则会话跨重启就会失忆。前端把这两套都画出来，是这个面板区别于
- * 普通聊天界面的地方——能看见 Agent 的输入，而不只是它的输出。
- *
- * 排查时最有用：模型行为诡异，十次里有九次是上下文里混进了不该有的东西，
- * 而这个视图是唯一能直接看到的地方。
+ * 服务端按 Agent 真正的请求组装路径返回下一次请求的基础内容。
+ * 下一条用户消息要到提交时才能追加，所以在这里明确排除它。
  */
-export function ContextInspector() {
-  const messages = useLiveSelector(selectMessages)
+export function ContextInspector({ threadId }: { threadId: string }) {
+  const status = useLiveSelector(selectStatus)
+  const turnCount = useLiveSelector(selectTurnCount)
+  const context = useModelContext(threadId, turnCount, status)
+  const messages = context.data?.messages ?? []
 
   // 派生统计放在组件里用 useMemo 算，**不能**写进 selector——
   // selector 返回新对象会让 useSyncExternalStore 无限重渲染。
@@ -36,24 +28,88 @@ export function ContextInspector() {
     return { byRole, toolCalls }
   }, [messages])
 
-  if (messages.length === 0) {
-    return <EmptyState title="暂无模型消息" hint="发起一轮任务后，模型看到的完整上下文会显示在这里。" />
+  if (context.isPending) {
+    return <EmptyState title="正在读取模型上下文" />
   }
+  if (context.isError || !context.data) {
+    return <EmptyState title="模型上下文读取失败" hint={<button type="button" onClick={() => void context.refetch()} className="text-accent">重试</button>} />
+  }
+
+  const preview = context.data
+  const inputTokens = preview.last_model_input_tokens
+  const ratio = inputTokens === null ? null : percent(inputTokens, preview.context_window)
 
   return (
     <div className="flex flex-col">
+      <div className="border-b border-line px-4 py-3 text-[11px] text-ink-muted">
+        <div className="flex items-center justify-between gap-3">
+          <strong className="text-[12px] font-medium text-ink">下一次模型请求的基础内容</strong>
+          <button type="button" onClick={() => void context.refetch()} className="text-accent hover:underline">刷新</button>
+        </div>
+        <p className="mt-1">
+          {preview.status === 'running'
+            ? '任务执行中，消息历史还会变化。下方是刚读取到的服务端状态。'
+            : '下一条用户输入会在提交时追加到这些消息之后。'}
+        </p>
+        <div className="mt-2 font-mono text-[10px] text-ink-faint">
+          {preview.model} · 思考强度 {preview.reasoning_effort} · 输出上限 {preview.max_tokens || '模型默认'} · 事件 #{preview.last_seq}
+        </div>
+        <div className="mt-3">
+          <span>上次模型请求输入：</span>
+          <span className="font-mono text-ink">{inputTokens === null ? '尚无记录' : `${compactNumber(inputTokens)} tokens`}</span>
+          {preview.context_window > 0 && inputTokens !== null && (
+            <span> / {compactNumber(preview.context_window)} 窗口（{ratio?.toFixed(1)}%）</span>
+          )}
+          <p className="mt-0.5 text-[10px] text-ink-faint">这是上次调用的实测值；下一次请求会追加新输入，token 数要到调用后才能确定。</p>
+        </div>
+      </div>
       <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-4 py-2.5">
         <span className="mr-1 text-[11px] text-ink-muted">{messages.length} 条消息</span>
         {stats.byRole.user > 0 && <Badge tone="accent">user ×{stats.byRole.user}</Badge>}
         {stats.byRole.assistant > 0 && <Badge tone="neutral">assistant ×{stats.byRole.assistant}</Badge>}
         {stats.byRole.tool > 0 && <Badge tone="success">tool ×{stats.byRole.tool}</Badge>}
         {stats.toolCalls > 0 && <Badge tone="running">{stats.toolCalls} 次调用</Badge>}
+        <Badge tone="neutral">{preview.tools.length} 个可用工具</Badge>
       </div>
       <div className="flex flex-col gap-1.5 px-4 py-3">
         {messages.map((message, index) => (
           <MessageRow key={index} message={message} index={index} />
         ))}
       </div>
+      {preview.tools.length > 0 && (
+        <div className="border-t border-line px-4 py-3">
+          <div className="mb-2 text-[11px] text-ink-muted">每次请求还会携带这些工具定义</div>
+          {preview.tools.map((tool) => (
+            <ToolRow key={tool.name} tool={tool} />
+          ))}
+        </div>
+      )}
+      {preview.wire_request !== undefined && (
+        <WireRequest data={preview.wire_request} />
+      )}
+    </div>
+  )
+}
+
+function WireRequest({ data }: { data: unknown }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="border-t border-line px-4 py-3">
+      <Disclosure open={open} onToggle={() => setOpen(!open)} summary={<span className="text-[11px] text-ink-muted">查看供应商请求 JSON（不含鉴权和下一条用户输入）</span>}>
+        <pre className="max-h-96 overflow-auto rounded bg-canvas p-2 font-mono text-[10px] whitespace-pre-wrap break-all text-ink-muted">{JSON.stringify(data, null, 2)}</pre>
+      </Disclosure>
+    </div>
+  )
+}
+
+function ToolRow({ tool }: { tool: { name: string; description: string; parameters: unknown } }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mb-1.5 rounded border border-line bg-surface px-2.5 py-1.5">
+      <Disclosure open={open} onToggle={() => setOpen(!open)} summary={<span className="font-mono text-[11px] text-ink">{tool.name}</span>}>
+        <p className="mb-2 text-[11px] text-ink-muted">{tool.description}</p>
+        <pre className="max-h-48 overflow-auto font-mono text-[10px] whitespace-pre-wrap break-all text-ink-faint">{JSON.stringify(tool.parameters, null, 2)}</pre>
+      </Disclosure>
     </div>
   )
 }

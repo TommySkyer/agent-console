@@ -6,6 +6,7 @@ import { Badge, Disclosure, EmptyState, LiveDot } from '@/components/primitives'
 import { TURN_FAILURE_CODES, type TurnFailureCode, type TurnView } from './types'
 import { compactNumber, plainPreview } from '@/lib/format'
 import type { LiveThreadState } from '@/store/liveThread/state'
+import type { PendingTurn } from './ThreadConsolePage'
 
 /**
  * 「执行步骤可视化」：把事件流还原成 Turn → Step → Item 的层次。
@@ -17,11 +18,18 @@ import type { LiveThreadState } from '@/store/liveThread/state'
  * 期间这个组件一次都不重渲染——重渲染的只有对应的那张 ItemCard。
  * apply.test.ts 里有一条测试专门守着它。
  */
-export function StepTimeline() {
+export function StepTimeline({ pendingTurn = null }: {
+  pendingTurn?: PendingTurn | null
+}) {
   const turns = useLiveSelector(selectTurns)
   const historyItems = useLiveSelector(selectHistoryItems)
+  const confirmed = pendingTurn !== null && turns
+    .slice(pendingTurn.previousTurnCount)
+    .some((turn) => turn.input === pendingTurn.input)
 
-  if (turns.length === 0 && historyItems.length === 0) {
+  const showPending = pendingTurn !== null && !confirmed
+
+  if (turns.length === 0 && historyItems.length === 0 && !showPending) {
     return (
       <EmptyState
         title="还没有执行记录"
@@ -36,6 +44,18 @@ export function StepTimeline() {
       {turns.map((turn, index) => (
         <TurnSection key={turn.id || index} turn={turn} index={index + 1} />
       ))}
+      {showPending && (
+        <div className="flex justify-end">
+          <div className="flex max-w-[85%] flex-col items-end gap-1">
+            <div className="rounded-2xl rounded-br-sm bg-accent/15 px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap text-ink ring-1 ring-accent/25">
+              {pendingTurn.input}
+            </div>
+            <span className="pr-1 text-[10px] text-ink-faint">
+              {pendingTurn.accepted ? '已提交，正在同步…' : '正在发送…'}
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

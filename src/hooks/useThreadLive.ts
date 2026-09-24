@@ -98,6 +98,7 @@ export function useThreadLive(
     store,
     streamStatus,
     isLoading: snapshot.isLoading,
-    error: snapshot.error,
+    // 恢复快照的请求失败时保留已播种的页面，不能让一次网络抖动清空时间线。
+    error: snapshot.data ? null : snapshot.error,
   }
 }

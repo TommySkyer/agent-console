@@ -17,6 +17,8 @@ export const queryKeys = {
   config: ['config'] as const,
   threads: (workspace?: string) => ['threads', workspace ?? ''] as const,
   snapshot: (threadId: string) => ['threads', threadId, 'snapshot'] as const,
+  modelContext: (threadId: string, turnCount: number, status: string) =>
+    ['threads', threadId, 'model-context', turnCount, status] as const,
 }
 
 /**
@@ -60,6 +62,19 @@ export function useSnapshot(threadId: string | undefined) {
   })
 }
 
+export function useModelContext(threadId: string, turnCount: number, status: string) {
+  const client = useApiClient()
+  return useQuery({
+    queryKey: queryKeys.modelContext(threadId, turnCount, status),
+    queryFn: () => threads.getModelContext(client, threadId),
+    retry: false,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    // 执行期间消息历史还会追加；即使 SSE 暂时断开，页内也能自行追上。
+    refetchInterval: (query) => status === 'running' || query.state.data?.status === 'running' ? 2000 : false,
+  })
+}
+
 export function useCreateThread() {
   const client = useApiClient()
   const queryClient = useQueryClient()
@@ -85,11 +100,10 @@ export function useStartTurn(threadId: string) {
   const client = useApiClient()
   return useMutation({
     mutationFn: (input: string) => threads.startTurn(client, threadId, input),
-    // 刻意**不**在 onSuccess 里动任何状态。
-    //
-    // 这个 mutation 成功只意味着后端返回了 202 —— Turn 才刚被准入，一步都没跑。
-    // 界面上「开始执行了」这件事必须由事件流里的 turn.started 驱动，
-    // 否则 UI 会比真实状态早一拍，而失败时（turn.failed）又对不上。
+    // POST 可能已被服务端接受但响应在网络中丢失；自动重试会造成第二次提交。
+    retry: false,
+    // 202 只意味着后端已准入。执行状态仍由 turn.started / turn.failed 驱动；
+    // 提交后的临时消息由页面单独管理，不能把它当成已开始执行的 Turn。
   })
 }
 

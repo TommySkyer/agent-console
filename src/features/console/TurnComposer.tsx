@@ -1,10 +1,11 @@
-import { useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { useLiveSelector } from '@/store/liveThread/LiveThreadContext'
-import { selectStatus } from '@/store/liveThread/selectors'
+import { selectStatus, selectTurnCount } from '@/store/liveThread/selectors'
 import { useCancelTurn, useStartTurn } from '@/store/queries'
 import { Button, Spinner } from '@/components/primitives'
 import { ApiError } from '@/api/errors'
 import { useToast } from '@/app/ToastContext'
+import type { PendingTurn } from './ThreadConsolePage'
 
 /**
  * 输入区：提交任务 / 取消任务。
@@ -21,25 +22,37 @@ import { useToast } from '@/app/ToastContext'
  * 反过来，取消之后 Thread 要等 turn.failed(cancelled) 事件到达才真正回到
  * idle，中间这段时间按钮也应当保持禁用。只有跟着事件流走才两头都对。
  */
-export function TurnComposer({ threadId }: { threadId: string }) {
+export function TurnComposer({ threadId, pendingTurn, onPendingChange }: {
+  threadId: string
+  pendingTurn: PendingTurn | null
+  onPendingChange: (pending: PendingTurn | null) => void
+}) {
   const status = useLiveSelector(selectStatus)
+  const turnCount = useLiveSelector(selectTurnCount)
   const [input, setInput] = useState('')
+  const nextNonce = useRef(0)
   const startTurn = useStartTurn(threadId)
   const cancelTurn = useCancelTurn(threadId)
   const toast = useToast()
 
   const running = status === 'running'
-  const canSubmit = input.trim().length > 0 && !running && !startTurn.isPending
+  const canSubmit = input.trim().length > 0 && !running && !pendingTurn && !startTurn.isPending
 
   function submit(event?: FormEvent) {
     event?.preventDefault()
     if (!canSubmit) return
     const text = input
+    const nonce = ++nextNonce.current
+    onPendingChange({ input: text, previousTurnCount: turnCount, accepted: false, nonce })
     // 乐观清空：提交失败时下面 onError 会把内容放回去。
     // 不这么做的话用户得自己删掉刚发出去的文字，很别扭。
     setInput('')
     startTurn.mutate(text, {
+      onSuccess: () => {
+        onPendingChange({ input: text, previousTurnCount: turnCount, accepted: true, nonce })
+      },
       onError: (error) => {
+        onPendingChange(null)
         setInput(text)
         if (error instanceof ApiError && error.shouldToast) toast.show(error.message, 'error')
       },
