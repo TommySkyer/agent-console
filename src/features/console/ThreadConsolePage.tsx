@@ -108,7 +108,7 @@ export function ThreadConsolePage() {
 
           <nav className="flex shrink-0 gap-1 border-b border-line px-4" role="tablist">
             <Tab active={tab === 'timeline'} onClick={() => setTab('timeline')}>
-              执行步骤
+              对话与执行
             </Tab>
             <Tab active={tab === 'context'} onClick={() => setTab('context')}>
               模型上下文

@@ -64,7 +64,9 @@ export class ApiClient {
     } catch {
       // 落到下面按状态码兜底
     }
-    const fallback = response.status === 404 ? 'thread_not_found' : 'internal'
+    // 后端的“会话不存在”有结构化错误码。裸 404 说明当前服务没有这个路由，
+    // 常见原因是前端已热更新而 GoLand 仍在运行旧版后端。
+    const fallback = response.status === 404 ? 'endpoint_not_found' : 'internal'
     return new ApiError(fallback, response.status, response.statusText)
   }
 }

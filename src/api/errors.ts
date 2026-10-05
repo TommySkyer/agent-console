@@ -10,6 +10,7 @@ export type ApiErrorCode =
   | 'bad_request'
   | 'invalid_workspace'
   | 'thread_not_found'
+  | 'endpoint_not_found'
   | 'turn_in_progress'
   | 'provider_error'
   | 'internal'
@@ -20,6 +21,7 @@ const MESSAGES: Record<ApiErrorCode, string> = {
   bad_request: '请求格式有误',
   invalid_workspace: '工作目录无效',
   thread_not_found: '会话不存在或已被删除',
+  endpoint_not_found: '接口不存在；请重启后端服务以加载最新代码',
   turn_in_progress: '该会话已有任务在执行',
   provider_error: '模型服务异常，请稍后重试',
   internal: '服务内部错误',

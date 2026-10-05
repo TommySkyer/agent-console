@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiClient } from '@/api/client'
+import { ApiError } from '@/api/errors'
 import { ApiClientProvider } from '@/app/ApiClientContext'
 import { FakeEventSource } from '@/test/FakeEventSource'
 import type { SessionEvent, Snapshot } from '@/types/contract'
@@ -20,6 +21,33 @@ describe('ThreadConsolePage submission', () => {
     vi.stubGlobal('EventSource', FakeEventSource)
   })
   afterEach(() => vi.unstubAllGlobals())
+
+  it('后端没有上下文接口时显示可操作的原因', async () => {
+    const snapshot: Snapshot = {
+      meta: { id: 'th_1', workspace: '/tmp/ws', created_at: '2026-01-01T00:00:00Z' },
+      status: 'idle', items: [], turns: [], last_seq: 0, usage,
+    }
+    const client = new ApiClient('')
+    client.request = (async (path: string) => {
+      if (path === '/api/threads/th_1') return snapshot
+      if (path === '/api/threads/th_1/model-context') throw new ApiError('endpoint_not_found', 404, 'Not Found')
+      throw new Error(`unexpected request: ${path}`)
+    }) as ApiClient['request']
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ApiClientProvider client={client}>
+          <MemoryRouter initialEntries={['/threads/th_1']}>
+            <Routes><Route path="/threads/:threadId" element={<ThreadConsolePage />} /></Routes>
+          </MemoryRouter>
+        </ApiClientProvider>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(await screen.findByRole('tab', { name: '模型上下文' }))
+    expect(await screen.findByText('接口不存在；请重启后端服务以加载最新代码')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+  })
 
   it('提交后立即显示消息，SSE 未送达时无需刷新也能从快照恢复', async () => {
     const input = '检查这个项目'
@@ -88,14 +116,19 @@ describe('ThreadConsolePage submission', () => {
         contextReads++
         return {
         model: 'test-model', max_tokens: 1024, reasoning_effort: 'high',
-        context_window: 1000, last_model_input_tokens: 90, status: contextStatus, last_seq: 8,
+        context_window: 1000, last_model_input_tokens: 90, last_cache_read_tokens: 60, status: contextStatus, last_seq: 8,
         messages: [
           { role: 'system', content: 'SYSTEM_CURRENT' },
           { role: 'user', content: '问题' },
           { role: 'assistant', content: answer },
         ],
         tools: [{ name: 'bash', description: '运行命令', parameters: { type: 'object' } }],
+        history: [{ kind: 'summary', at: '2026-01-01T00:00:00Z', estimated_before: 700, estimated_after: 200, message_count: 2 }],
         }
+      }
+      if (path === '/api/threads/th_1/model-context/revisions/0') {
+        return { kind: 'summary', at: '2026-01-01T00:00:00Z', estimated_before: 700, estimated_after: 200,
+          before: [{ role: 'system', content: 'SYSTEM_OLD' }, { role: 'user', content: '旧任务' }] }
       }
       throw new Error(`unexpected request: ${path}`)
     }) as ApiClient['request']
@@ -115,6 +148,12 @@ describe('ThreadConsolePage submission', () => {
     expect(screen.getByText('完整答案')).toBeInTheDocument()
     expect(screen.getByText('bash')).toBeInTheDocument()
     expect(screen.getByText(/90 tokens/)).toBeInTheDocument()
+    expect(screen.getByText(/其中缓存命中：60 tokens/)).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '对话与执行' })).toBeInTheDocument()
+    fireEvent.click(screen.getByText(/窗口 1 · 摘要压缩前/))
+    const current = screen.getByText('SYSTEM_CURRENT')
+    const old = await screen.findByText('SYSTEM_OLD')
+    expect(current.compareDocumentPosition(old) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.getByText(/下一条用户输入会在提交时追加/)).toBeInTheDocument()
 
     const initialReads = contextReads

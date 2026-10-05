@@ -111,6 +111,12 @@ function reduce(state: LiveThreadState, event: SessionEvent): LiveThreadState {
       }
     }
 
+    case 'context.changed': {
+      // The server stores archived windows; the live projection follows the
+      // replacement immediately so snapshots and SSE stay equivalent.
+      return { ...state, messages: event.payload.after }
+    }
+
     case 'turn.completed': {
       const finished = updateLastTurn(state, (turn) => ({
         ...turn,

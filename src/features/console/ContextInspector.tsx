@@ -1,4 +1,7 @@
 import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useApiClient } from '@/app/ApiClientContext'
+import { getContextRevision } from '@/api/threads'
 import { useLiveSelector } from '@/store/liveThread/LiveThreadContext'
 import { selectStatus, selectTurnCount } from '@/store/liveThread/selectors'
 import { Badge, Disclosure, EmptyState } from '@/components/primitives'
@@ -32,7 +35,7 @@ export function ContextInspector({ threadId }: { threadId: string }) {
     return <EmptyState title="正在读取模型上下文" />
   }
   if (context.isError || !context.data) {
-    return <EmptyState title="模型上下文读取失败" hint={<button type="button" onClick={() => void context.refetch()} className="text-accent">重试</button>} />
+    return <EmptyState title="模型上下文读取失败" hint={<div className="flex flex-col items-center gap-2"><span>{context.error instanceof Error ? context.error.message : '请检查后端服务'}</span><button type="button" onClick={() => void context.refetch()} className="text-accent">重试</button></div>} />
   }
 
   const preview = context.data
@@ -43,7 +46,7 @@ export function ContextInspector({ threadId }: { threadId: string }) {
     <div className="flex flex-col">
       <div className="border-b border-line px-4 py-3 text-[11px] text-ink-muted">
         <div className="flex items-center justify-between gap-3">
-          <strong className="text-[12px] font-medium text-ink">下一次模型请求的基础内容</strong>
+          <strong className="text-[12px] font-medium text-ink">当前模型窗口</strong>
           <button type="button" onClick={() => void context.refetch()} className="text-accent hover:underline">刷新</button>
         </div>
         <p className="mt-1">
@@ -55,12 +58,15 @@ export function ContextInspector({ threadId }: { threadId: string }) {
           {preview.model} · 思考强度 {preview.reasoning_effort} · 输出上限 {preview.max_tokens || '模型默认'} · 事件 #{preview.last_seq}
         </div>
         <div className="mt-3">
-          <span>上次模型请求输入：</span>
+          <span>上次调用实际占窗：</span>
           <span className="font-mono text-ink">{inputTokens === null ? '尚无记录' : `${compactNumber(inputTokens)} tokens`}</span>
           {preview.context_window > 0 && inputTokens !== null && (
-            <span> / {compactNumber(preview.context_window)} 窗口（{ratio?.toFixed(1)}%）</span>
+            <span> / {compactNumber(preview.context_window)} tokens（{ratio?.toFixed(1)}%）</span>
           )}
-          <p className="mt-0.5 text-[10px] text-ink-faint">这是上次调用的实测值；下一次请求会追加新输入，token 数要到调用后才能确定。</p>
+          {preview.last_cache_read_tokens != null && inputTokens !== null && (
+            <p className="mt-0.5">其中缓存命中：{compactNumber(preview.last_cache_read_tokens)} tokens（占本次输入 {percent(preview.last_cache_read_tokens, inputTokens).toFixed(1)}%，仍占窗口）</p>
+          )}
+          <p className="mt-0.5 text-[10px] text-ink-faint">这是上次调用收到请求时的实测输入；最终回答和下一条用户输入会进入下一次请求。</p>
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-4 py-2.5">
@@ -87,8 +93,35 @@ export function ContextInspector({ threadId }: { threadId: string }) {
       {preview.wire_request !== undefined && (
         <WireRequest data={preview.wire_request} />
       )}
+      {(preview.history ?? []).length > 0 && (
+        <section className="border-t border-line px-4 py-4">
+          <h2 className="mb-2 text-xs font-medium text-ink">此前的窗口（按发生顺序）</h2>
+          {preview.history!.map((revision, index) => (
+            <HistoryWindow key={`${revision.at}-${index}`} threadId={threadId} revision={revision} index={index} />
+          ))}
+        </section>
+      )}
     </div>
   )
+}
+
+function HistoryWindow({ threadId, revision, index }: { threadId: string; revision: NonNullable<import('@/types/contract').ModelContext['history']>[number]; index: number }) {
+  const [open, setOpen] = useState(false)
+  const client = useApiClient()
+  const archive = useQuery({
+    queryKey: ['threads', threadId, 'model-context', 'revision', index],
+    queryFn: () => getContextRevision(client, threadId, index),
+    enabled: open,
+    staleTime: Infinity,
+  })
+  return <div className="mb-2 rounded border border-line bg-surface px-3 py-2">
+    <Disclosure open={open} onToggle={() => setOpen(!open)} summary={<span className="text-[11px] text-ink-muted">窗口 {index + 1} · {revision.kind === 'summary' ? '摘要压缩前' : '旧工具结果清理前'} · {revision.message_count} 条消息 · {new Date(revision.at).toLocaleString()}</span>}>
+      <p className="my-2 text-[10px] text-ink-faint">治理前预估 {compactNumber(revision.estimated_before)} → 治理后 {compactNumber(revision.estimated_after)} tokens</p>
+      {archive.isPending && <p className="text-[11px] text-ink-faint">正在读取原始窗口…</p>}
+      {archive.isError && <p className="text-[11px] text-danger">读取原始窗口失败</p>}
+      {archive.data && <div className="flex flex-col gap-1.5">{archive.data.before.map((message, messageIndex) => <MessageRow key={messageIndex} message={message} index={messageIndex} />)}</div>}
+    </Disclosure>
+  </div>
 }
 
 function WireRequest({ data }: { data: unknown }) {
@@ -180,6 +213,11 @@ function MessageRow({ message, index }: { message: Message; index: number }) {
           {message.tool_call_id && (
             <div className="font-mono text-[10px] text-ink-faint">
               回指调用 {message.tool_call_id}
+            </div>
+          )}
+          {message.source_path && (
+            <div className="font-mono text-[10px] break-all text-ink-faint">
+              完整工具输出归档：{message.source_path}
             </div>
           )}
         </div>
