@@ -159,7 +159,18 @@ export interface Message {
   reasoning_content?: string
   tool_calls?: ToolCall[]
   tool_call_id?: string
+  source_path?: string
 }
+
+export interface ContextRevision {
+  kind: 'prune' | 'summary'
+  at: string
+  before: Message[]
+  estimated_before: number
+  estimated_after: number
+}
+
+export type ContextRevisionMeta = Omit<ContextRevision, 'before'> & { message_count: number }
 
 /** 服务端按实际 Agent 请求组装逻辑生成；messages 尚未包含下一条用户输入。 */
 export interface ModelContext {
@@ -170,6 +181,8 @@ export interface ModelContext {
   reasoning_effort: string
   context_window: number
   last_model_input_tokens: number | null
+  last_cache_read_tokens?: number | null
+  history?: ContextRevisionMeta[]
   status: ThreadStatus
   last_seq: number
   wire_request?: unknown
@@ -188,6 +201,7 @@ export type EventType =
   | 'item.completed'
   | 'usage.updated'
   | 'message.appended'
+  | 'context.changed'
 
 /** item.delta 的 field 取值。对齐 session.FieldText / FieldOutput。 */
 export const FIELD_TEXT = 'text'
@@ -229,6 +243,7 @@ export type SessionEvent =
       payload: { turn: Usage; delta: Usage; context_window?: number }
     })
   | (EventBase & { type: 'message.appended'; payload: { message: Message } })
+  | (EventBase & { type: 'context.changed'; payload: { kind: string; before: Message[]; after: Message[]; estimated_before: number; estimated_after: number } })
 
 /** 供 realtime 层逐个 addEventListener 用。顺序无关紧要，但必须与后端完全一致。 */
 export const EVENT_TYPES: EventType[] = [
@@ -242,6 +257,7 @@ export const EVENT_TYPES: EventType[] = [
   'item.completed',
   'usage.updated',
   'message.appended',
+  'context.changed',
 ]
 
 // ── Turn 失败原因码（对齐 agent/errors.go） ────────────────────────────
@@ -255,6 +271,7 @@ export const TURN_FAILURE_CODES = {
   provider_error: '模型服务异常',
   tool_failure: '工具执行失败',
   cancelled: '已取消',
+  context_budget: '上下文预算不足',
 } as const
 
 export type TurnFailureCode = keyof typeof TURN_FAILURE_CODES
